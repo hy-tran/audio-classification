@@ -18,9 +18,9 @@ archive is saved under `data/raw/audiosceneclassification2025.zip`.
 Preview a random clip (or specify one) along with its label:
 
 ```bash
-python -i scripts/listen_random_clip.py
+python scripts/listen_random_clip.py
 # or specify a particular clip
-python -i scripts/listen_random_clip.py --clip a001_50_60.wav
+python scripts/listen_random_clip.py --clip a001_50_60.wav
 ```
 
 The script looks inside `data/raw/audiosceneclassification2025/audio` and uses
