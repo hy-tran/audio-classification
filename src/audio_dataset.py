@@ -1,8 +1,10 @@
 import os
 import csv
+from random import random
 import torch
 from torch.utils.data import Dataset
 import torchaudio  
+from typing import List, Tuple
 
 # -----------------------------------------------------------------------------
 # DATASET IMPLEMENTATION NOTES
@@ -31,7 +33,9 @@ import torchaudio
 
 
 class LoadAudio(Dataset):
-    def __init__(self, root_dir, meta_filename, audio_subdir, training_flag: bool = True):
+    def __init__(self, root_dir, meta_filename, audio_subdir, training_flag: bool = True,
+                 target_sr: int = 22050,
+                 duration: float = 10.0):
         """
         Args:
             root_dir (str): Dataset root directory.
@@ -48,19 +52,64 @@ class LoadAudio(Dataset):
         #    `self.label_to_idx` (class_name → integer index).
         # 5) Store samples as list of (filepath, label_string).
 
+        self.root_dir = root_dir
+        self.meta_path = os.path.join(root_dir, meta_filename)
+        self.audio_dir = os.path.join(root_dir, audio_subdir)
         self.training_flag = training_flag
-        self.samples = [None] * 300               # list of (filepath, label_string), change this
-        self.num_classes = 15                 # placeholder
-        self.class_names = ["placeholder"] * self.num_classes
-        self.label_to_idx = {}                # fill as {class_name: index}
+        self.target_sr = target_sr
+        self.num_samples = int(target_sr * duration)
+
+        # read metadata CSV (expects columns: filename,label)
+        samples: List[Tuple[str,str]] = []
+        labels = []
+        with open(self.meta_path, newline='', encoding='utf-8') as f:
+            rdr = csv.reader(f)
+            for row in rdr:
+                if not row: 
+                    continue
+                fname, label = row[0].strip(), row[1].strip()
+                audio_path = os.path.join(self.audio_dir, fname)
+                if os.path.isfile(audio_path):
+                    samples.append((audio_path, label))
+                    labels.append(label)
+        if not samples:
+            raise RuntimeError(f"No valid audio files found in {self.audio_dir} using {self.meta_path}")
+        
+        # build class_names and mapping
+        class_names = sorted(list(set(labels)))
+        self.class_names = class_names
+        self.label_to_idx = {c: i for i, c in enumerate(class_names)}
+        self.num_classes = len(class_names)
+        self.samples = samples
 
         # Temporary placeholder waveform size; remove when real loading implemented.
         self.waveform_shape = (1, 220500)     # ~5 seconds at ~44.1kHz
 
+        # resampler used when sr != target_sr
+        self.resampler = torchaudio.transforms.Resample(orig_freq=44100, new_freq=self.target_sr)
 
     def __len__(self):
         return len(self.samples)
 
+    def _load_and_process(self, path: str) -> torch.Tensor:
+        waveform, sr = torchaudio.load(path)   # [channels, samples]
+        # convert to mono if channels > 1
+        if waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+        # resample if needed
+        if sr != self.target_sr:
+            waveform = torchaudio.transforms.Resample(sr, self.target_sr)(waveform)
+        # pad or crop to num_samples
+        if waveform.shape[1] < self.num_samples:
+            pad = self.num_samples - waveform.shape[1]
+            waveform = torch.nn.functional.pad(waveform, (0, pad))
+        elif waveform.shape[1] > self.num_samples:
+            start = 0
+            if self.training_flag:
+                start = random.randint(0, waveform.shape[1] - self.num_samples)
+            #example : num_samples=20000, waveform.shape[1]=30000, if start=5000 by random then after crop get 5000 to 25000
+            waveform = waveform[:, start:start + self.num_samples]
+        return waveform
 
     def __getitem__(self, idx):
         # Steps to implement:
@@ -73,9 +122,13 @@ class LoadAudio(Dataset):
 
         # Placeholder output for now
         dummy_waveform = torch.randn(self.waveform_shape)
-
+        path, label_str = self.samples[idx]
+        waveform = self._load_and_process(path)
         # if self.training_flag:
         #     # apply augmentations here
 
-        label = torch.randint(0, self.num_classes, (1,)).item()
-        return dummy_waveform, label
+        # ensure tensor dtype float32
+        waveform = waveform.float()
+        label_idx = self.label_to_idx[label_str]
+         # return waveform tensor and label tensor (label last)
+        return waveform, torch.tensor(label_idx, dtype=torch.long)
