@@ -1,6 +1,6 @@
 import os
 import csv
-from random import random
+import random
 import torch
 from torch.utils.data import Dataset
 import torchaudio  
@@ -82,9 +82,6 @@ class LoadAudio(Dataset):
         self.num_classes = len(class_names)
         self.samples = samples
 
-        # Temporary placeholder waveform size; remove when real loading implemented.
-        self.waveform_shape = (1, 220500)     # ~5 seconds at ~44.1kHz
-
         # resampler used when sr != target_sr
         self.resampler = torchaudio.transforms.Resample(orig_freq=44100, new_freq=self.target_sr)
 
@@ -120,8 +117,6 @@ class LoadAudio(Dataset):
         #   5) label_idx = self.label_to_idx[label_str]
         #   6) Return (feature(s), label_idx) with the label as the final item.
 
-        # Placeholder output for now
-        dummy_waveform = torch.randn(self.waveform_shape)
         path, label_str = self.samples[idx]
         waveform = self._load_and_process(path)
         # if self.training_flag:
