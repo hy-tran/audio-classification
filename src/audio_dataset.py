@@ -62,18 +62,65 @@ class LoadAudio(Dataset):
         # read metadata CSV (expects columns: filename,label)
         samples: List[Tuple[str,str]] = []
         labels = []
-        with open(self.meta_path, newline='', encoding='utf-8') as f:
-            rdr = csv.reader(f)
-            for row in rdr:
-                if not row: 
+        total_rows = 0
+        skipped = 0
+        examples_skipped = []
+        with open(self.meta_path, 'r', encoding='utf-8', newline='') as f:
+            for raw in f:
+                total_rows += 1
+                line = raw.strip()
+                if not line:
+                    skipped += 1
                     continue
-                fname, label = row[0].strip(), row[1].strip()
+
+                parts = line.split()
+                # parts[0] -> filename, parts[1] -> label if present
+                if len(parts) == 0:
+                    skipped += 1
+                    continue
+                fname = parts[0].strip()
+                label = parts[1].strip() if len(parts) >= 2 else None
+
+                if not fname:
+                    skipped += 1
+                    continue
+
+                # prefer file inside audio_dir, but accept absolute paths if provided
                 audio_path = os.path.join(self.audio_dir, fname)
-                if os.path.isfile(audio_path):
-                    samples.append((audio_path, label))
-                    labels.append(label)
+                if not os.path.isfile(audio_path):
+                    if os.path.isabs(fname) and os.path.isfile(fname):
+                        audio_path = fname
+                    else:
+                        skipped += 1
+                        if len(examples_skipped) < 5:
+                            examples_skipped.append(("missing", fname))
+                        continue
+
+                # infer label when only filename is provided
+                if not label:
+                    rel_dir = os.path.dirname(fname)
+                    if rel_dir:
+                        label = rel_dir.split(os.sep)[0]
+                    else:
+                        stem = os.path.splitext(os.path.basename(fname))[0]
+                        if "_" in stem:
+                            label = stem.split("_")[0]
+                        elif "-" in stem:
+                            label = stem.split("-")[0]
+                        else:
+                            label = os.path.basename(os.path.dirname(audio_path)) or "unknown"
+
+                samples.append((audio_path, label))
+                labels.append(label)
         if not samples:
-            raise RuntimeError(f"No valid audio files found in {self.audio_dir} using {self.meta_path}")
+            msg = (
+                f"No valid audio files found in {self.audio_dir} using {self.meta_path}\n"
+                f"Rows read: {total_rows}, skipped: {skipped}\n"
+                f"Examples of skipped items: {examples_skipped}\n"
+                "Ensure metadata lines are 'filename [label]' (space-separated) and files exist in the audio subdir,\n"
+                "or provide absolute paths in the metadata file."
+            )
+            raise RuntimeError(msg)
         
         # build class_names and mapping
         class_names = sorted(list(set(labels)))
